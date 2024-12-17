@@ -5,6 +5,7 @@ from PIL import Image
 from docx import Document
 import pytesseract
 import os
+import re
 
 # Set the path to the Tesseract executable (update as needed for your system)
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -23,12 +24,21 @@ os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+# Function to clean unwanted English terms, keeping only Devanagari text and numbers
+def clean_text(text):
+    hindi_pattern = r'[^\u0900-\u097F\s\d]'  # Match non-Hindi and non-numeric characters
+    cleaned_text = re.sub(hindi_pattern, '', text)
+    return cleaned_text.strip()
+
 # Function to process an image and extract text using Tesseract OCR
 def image_to_text(image_path):
     try:
         # Use Tesseract OCR to extract text from the image
         extracted_text = pytesseract.image_to_string(Image.open(image_path), lang='hin+eng')
-        return extracted_text.strip() if extracted_text.strip() else "No text detected in the image."
+        
+        # Clean text to remove unwanted English terms
+        cleaned_text = clean_text(extracted_text)
+        return cleaned_text if cleaned_text else "No Hindi text detected in the image."
     except Exception as e:
         return f"Error processing the image: {e}"
 
@@ -44,14 +54,14 @@ def pdf_to_text(pdf_path):
             temp_image_path = f"temp_page_{page_number}.png"
             page_image.save(temp_image_path, "PNG")
 
-            # Extract text from the saved image
+            # Extract and clean text from the saved image
             page_text = image_to_text(temp_image_path)
             text += f"Page {page_number + 1}:\n{page_text}\n"
 
             # Clean up the temporary image
             os.remove(temp_image_path)
 
-        return text if text.strip() else "No text detected in the PDF."
+        return text if text.strip() else "No Hindi text detected in the PDF."
     except Exception as e:
         return f"Error processing the PDF: {e}"
 
