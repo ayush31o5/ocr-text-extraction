@@ -1,0 +1,13 @@
+{
+    "cmake.sourceDirectory": "B:/img to text/poppler-24.08.0/share/poppler",
+    "zencoder.enableRepoIndexing": true,
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./output",
+        "-p",
+        "test*.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true
+}

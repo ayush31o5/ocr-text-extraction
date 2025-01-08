@@ -3,6 +3,7 @@ from werkzeug.utils import secure_filename
 from pdf2image import convert_from_path
 from PIL import Image
 from docx import Document
+from docx.shared import Pt
 import pytesseract
 import os
 import re
@@ -30,46 +31,38 @@ def clean_text(text):
     cleaned_text = re.sub(hindi_pattern, '', text)
     return cleaned_text.strip()
 
-# Function to process an image and extract text using Tesseract OCR
-def image_to_text(image_path):
+# Function to extract text from image
+def extract_text_from_image(image_path, lang='hin+san'):
     try:
-        # Use Tesseract OCR to extract text from the image
-        extracted_text = pytesseract.image_to_string(Image.open(image_path), lang='hin+eng')
-        
-        # Clean text to remove unwanted English terms
-        cleaned_text = clean_text(extracted_text)
-        return cleaned_text if cleaned_text else "No Hindi text detected in the image."
+        with Image.open(image_path) as image:
+            text = pytesseract.image_to_string(image, lang=lang, config='--psm 6')
+        return clean_text(text)
     except Exception as e:
-        return f"Error processing the image: {e}"
+        return f"Error extracting text from image: {e}"
 
-# Function to process a PDF and extract text using Tesseract OCR
-def pdf_to_text(pdf_path):
+# Function to extract text from PDF (process one page at a time)
+def extract_text_from_pdf(pdf_path, lang='hin+san'):
     try:
-        text = ""
-        # Convert PDF pages to images
-        poppler_path = None  # Set this if needed: r"C:/path/to/poppler/bin"
+        poppler_path = r"C:\path\to\poppler\bin"  # Update this path for your system
         pages = convert_from_path(pdf_path, dpi=150, poppler_path=poppler_path)
-        for page_number, page_image in enumerate(pages):
-            # Save page image temporarily
-            temp_image_path = f"temp_page_{page_number}.png"
-            page_image.save(temp_image_path, "PNG")
-
-            # Extract and clean text from the saved image
-            page_text = image_to_text(temp_image_path)
-            text += f"Page {page_number + 1}:\n{page_text}\n"
-
-            # Clean up the temporary image
-            os.remove(temp_image_path)
-
-        return text if text.strip() else "No Hindi text detected in the PDF."
+        text = ""
+        for page_number, page in enumerate(pages):
+            page_text = pytesseract.image_to_string(page, lang=lang, config='--psm 6')
+            text += f"Page {page_number + 1}:\n{clean_text(page_text)}\n"
+            page.close()  # Release memory after processing each page
+        return text
     except Exception as e:
-        return f"Error processing the PDF: {e}"
+        return f"Error extracting text from PDF: {e}"
 
-# Function to save extracted text to a Word document
+# Function to save extracted text to a Word document incrementally
 def save_to_word(text, output_path):
     try:
         document = Document()
-        document.add_paragraph(text)
+        for line in text.split('\n'):
+            paragraph = document.add_paragraph()
+            run = paragraph.add_run(line)
+            run.font.size = Pt(12)  # Adjust font size as needed
+            run.font.name = 'Arial'  # Adjust font name as needed
         document.save(output_path)
     except Exception as e:
         return f"Error saving to Word document: {e}"
@@ -96,9 +89,9 @@ def upload_file():
 
         # Extract text based on file type
         if filename.lower().endswith(('png', 'jpg', 'jpeg')):
-            extracted_text = image_to_text(file_path)
+            extracted_text = extract_text_from_image(file_path)
         elif filename.lower().endswith('pdf'):
-            extracted_text = pdf_to_text(file_path)
+            extracted_text = extract_text_from_pdf(file_path)
         else:
             return "Unsupported file type."
 
