@@ -3,71 +3,162 @@ from werkzeug.utils import secure_filename
 from pdf2image import convert_from_path
 from PIL import Image
 from docx import Document
-from docx.shared import Pt
+from docx.shared import Pt, Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 import pytesseract
+import google.generativeai as generative_ai
 import os
 import re
 
-# Set the path to the Tesseract executable (update as needed for your system)
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
-# Flask app setup
+generative_ai.configure(
+    api_key="YOUR_API_KEY"
+)
+
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = 'uploads/'
 app.config['OUTPUT_FOLDER'] = 'output/'
 app.config['ALLOWED_EXTENSIONS'] = {'png', 'jpg', 'jpeg', 'pdf'}
 
-# Ensure required folders exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
 
-# Function to check allowed file extensions
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-# Function to clean unwanted English terms, keeping only Devanagari text and numbers
-def clean_text(text):
-    hindi_pattern = r'[^\u0900-\u097F\s\d]'  # Match non-Hindi and non-numeric characters
-    cleaned_text = re.sub(hindi_pattern, '', text)
-    return cleaned_text.strip()
-
-# Function to extract text from image
-def extract_text_from_image(image_path, lang='hin+san'):
+def extract_text_with_layout(image, lang='hin+san'):
+    """
+    Extract text while preserving layout information using Tesseract's HOCR output
+    """
     try:
-        with Image.open(image_path) as image:
-            text = pytesseract.image_to_string(image, lang=lang, config='--psm 6')
-        return clean_text(text)
+        # Get HOCR output which contains position information
+        hocr_output = pytesseract.image_to_pdf_or_hocr(image, extension='hocr', lang=lang)
+        
+        # Get bounding box information
+        boxes = pytesseract.image_to_boxes(image, lang=lang)
+        
+        # Get regular text
+        text = pytesseract.image_to_string(image, lang=lang, config='--psm 4 --oem 1')
+        
+        # Get word-level position data
+        word_data = pytesseract.image_to_data(image, lang=lang, output_type=pytesseract.Output.DICT)
+        
+        layout_info = {
+            'text': text,
+            'boxes': boxes,
+            'word_data': word_data,
+            'hocr': hocr_output
+        }
+        
+        return layout_info
     except Exception as e:
-        return f"Error extracting text from image: {e}"
+        return f"Error extracting text and layout: {e}"
 
-# Function to extract text from PDF (process one page at a time)
-def extract_text_from_pdf(pdf_path, lang='hin+san'):
-    try:
-        poppler_path = r"C:\path\to\poppler\bin"  # Update this path for your system
-        pages = convert_from_path(pdf_path, dpi=150, poppler_path=poppler_path)
-        text = ""
-        for page_number, page in enumerate(pages):
-            page_text = pytesseract.image_to_string(page, lang=lang, config='--psm 6')
-            text += f"Page {page_number + 1}:\n{clean_text(page_text)}\n"
-            page.close()  # Release memory after processing each page
-        return text
-    except Exception as e:
-        return f"Error extracting text from PDF: {e}"
+def analyze_layout(layout_info):
+    """
+    Analyze the layout to detect:
+    - Columns
+    - Indentation levels
+    - Text alignment
+    - Special formatting (like centered headers)
+    """
+    word_data = layout_info['word_data']
+    
+    # Detect columns by analyzing x-positions
+    x_positions = word_data['left']
+    potential_columns = []
+    
+    # Group x-positions to detect column starts
+    for x in sorted(set(x_positions)):
+        if len([pos for pos in x_positions if abs(pos - x) < 20]) > 5:  # Threshold for column detection
+            potential_columns.append(x)
+    
+    # Analyze indentation patterns
+    indentation_levels = {}
+    for i, left in enumerate(word_data['left']):
+        if word_data['conf'][i] > 60:  # Only consider high-confidence words
+            line_num = word_data['line_num'][i]
+            if line_num not in indentation_levels:
+                indentation_levels[line_num] = left
+    
+    return {
+        'columns': potential_columns,
+        'indentation': indentation_levels
+    }
 
-# Function to save extracted text to a Word document incrementally
-def save_to_word(text, output_path):
-    try:
-        document = Document()
-        for line in text.split('\n'):
-            paragraph = document.add_paragraph()
-            run = paragraph.add_run(line)
-            run.font.size = Pt(12)  # Adjust font size as needed
-            run.font.name = 'Arial'  # Adjust font name as needed
-        document.save(output_path)
-    except Exception as e:
-        return f"Error saving to Word document: {e}"
+def format_text_with_layout(text, layout_analysis):
+    """
+    Format the extracted text to match the original layout
+    """
+    formatted_lines = []
+    current_line = ""
+    current_indent = 0
+    
+    for line in text.split('\n'):
+        # Remove extra spaces while preserving indentation
+        stripped_line = line.strip()
+        if not stripped_line:
+            formatted_lines.append('')
+            continue
+            
+        # Detect if line is part of a column
+        indent_match = re.match(r'^(\s*)', line)
+        if indent_match:
+            current_indent = len(indent_match.group(1))
+        
+        # Handle special cases like centered text or multi-column layout
+        if any(stripped_line.startswith(str(num)) for num in range(10)):
+            # This might be a page number or index entry
+            current_line = ' ' * current_indent + stripped_line
+        else:
+            current_line = ' ' * current_indent + stripped_line
+        
+        formatted_lines.append(current_line)
+    
+    return '\n'.join(formatted_lines)
 
-# Routes
+def save_to_word_with_layout(formatted_text, output_path):
+    """
+    Save the formatted text to a Word document while preserving layout
+    """
+    doc = Document()
+    
+    # Set up the document formatting
+    section = doc.sections[0]
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.left_margin = Inches(1)
+    section.right_margin = Inches(1)
+    
+    for line in formatted_text.split('\n'):
+        # Detect indentation level
+        indent_match = re.match(r'^(\s*)', line)
+        indent_level = len(indent_match.group(1)) if indent_match else 0
+        
+        # Create paragraph with preserved formatting
+        paragraph = doc.add_paragraph()
+        paragraph.style = doc.styles['Normal']
+        
+        # Set indentation
+        paragraph_format = paragraph.paragraph_format
+        paragraph_format.left_indent = Inches(indent_level * 0.25)
+        
+        # Add the text with proper font
+        run = paragraph.add_run(line.strip())
+        run.font.name = 'Arial Unicode MS'
+        run.font.size = Pt(11)
+        
+        # Preserve special formatting
+        if line.strip().isupper():
+            run.bold = True
+        
+        # Add minimal spacing between paragraphs
+        paragraph_format.space_before = Pt(0)
+        paragraph_format.space_after = Pt(0)
+    
+    doc.save(output_path)
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -78,7 +169,6 @@ def upload_file():
         return "No file part in the request."
 
     file = request.files['file']
-
     if file.filename == '':
         return "No file selected for uploading."
 
@@ -87,23 +177,27 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
 
-        # Extract text based on file type
-        if filename.lower().endswith(('png', 'jpg', 'jpeg')):
-            extracted_text = extract_text_from_image(file_path)
-        elif filename.lower().endswith('pdf'):
-            extracted_text = extract_text_from_pdf(file_path)
+        if filename.lower().endswith('pdf'):
+            images = convert_from_path(file_path)
+            combined_text = ""
+            
+            for i, image in enumerate(images):
+                layout_info = extract_text_with_layout(image)
+                layout_analysis = analyze_layout(layout_info)
+                formatted_text = format_text_with_layout(layout_info['text'], layout_analysis)
+                combined_text += f"\n--- Page {i+1} ---\n{formatted_text}\n"
         else:
-            return "Unsupported file type."
+            image = Image.open(file_path)
+            layout_info = extract_text_with_layout(image)
+            layout_analysis = analyze_layout(layout_info)
+            combined_text = format_text_with_layout(layout_info['text'], layout_analysis)
 
-        # Save extracted text to a Word document
-        output_doc_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{os.path.splitext(filename)[0]}.docx")
-        save_error = save_to_word(extracted_text, output_doc_path)
-        if save_error:
-            return save_error
+        output_doc_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{os.path.splitext(filename)[0]}_formatted.docx")
+        save_to_word_with_layout(combined_text, output_doc_path)
 
-        return render_template('result.html', text=extracted_text, doc_path=f"output/{os.path.basename(output_doc_path)}")
-    else:
-        return "Invalid file type. Only PNG, JPG, JPEG, and PDF are allowed."
+        return render_template('result.html', text=combined_text, doc_path=f"output/{os.path.basename(output_doc_path)}")
+    
+    return "Invalid file type. Only PNG, JPG, JPEG, and PDF are allowed."
 
 @app.route('/output/<filename>')
 def download_file(filename):
