@@ -2,7 +2,7 @@ import os
 import pdfplumber
 import requests
 import time
-from flask import Flask, request, render_template, send_from_directory, url_for
+from flask import Flask, request, render_template, send_from_directory
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 from docx import Document
@@ -60,7 +60,36 @@ def process_page(page):
         return ""
     html = ""
     for chunk in chunk_text(text):
-        prompt = f"Convert text to HTML:\n{chunk}"
+        prompt = f"""
+You have been given text extracted from a page of an A4-sized document potentially containing Hindi/Sanskrit text. Assume an A4 page as a reference. Your task is to analyze this text and generate an exact HTML replica of how that text might have been structured and formatted on the original page, preserving all formatting details as described below. If the text suggests the presence of an image (e.g., mentions "figure", "image", or has a large gap typical of an image), replace that section with an image placeholder block labeled "Image".
+
+Instructions for Extraction and HTML Formatting:
+
+    Infer and replicate the structure based *only* on the provided text chunk.
+    Extract every word, number, and special character exactly as it appears in the text chunk.
+    Preserve all spacing, indentation, line breaks, and blank lines exactly as present in the text chunk. Try to infer paragraph breaks from line spacing or indentation.
+    Attempt to infer formatting like bold or italics if hinted at by context. Use standard HTML tags (<b>, <i>, <u>).
+    Infer paragraph alignment (left, right, center, justified) based on text patterns if possible, default to left.
+    If the text looks like a table, structure it using HTML table tags (<table>, <tr>, <td>).
+    If lines start with bullets or numbers, format them as HTML lists (<ul> or <ol> with <li>).
+    Ensure symbols, special characters, currency signs, checkboxes, arrows, and mathematical notations are accurately represented.
+    If the text appears to be a header or footer, format it accordingly.
+    If the text contains a line of dashes suggesting a horizontal rule, use the <hr> tag.
+
+Handling Potential Images:
+
+    If the text contains phrasing like "[Image]", "Figure X", "See image below", create a div placeholder with "Image" inside it:
+
+<div style="width:200px;height:150px;border:1px solid black;text-align:center;display:flex;align-items:center;justify-content:center;margin:10px auto;">Image Placeholder</div>
+
+--- START OF TEXT CHUNK TO CONVERT ---
+
+{chunk}
+
+--- END OF TEXT CHUNK TO CONVERT ---
+
+Generate only the HTML code for the body content based on the text chunk provided above.
+"""
         fragment = call_gemini_api(prompt)
         html += fragment or ""
     return f"<div>{html}</div>"
