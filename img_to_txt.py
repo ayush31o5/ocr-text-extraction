@@ -12,7 +12,7 @@ from docx import Document
 # ── CONFIG & LOGGING ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = 'GEMINI_API_KEY'
 if not GEMINI_API_KEY:
     logging.warning("GEMINI_API_KEY is not set! API calls will fail.")
 
@@ -49,7 +49,7 @@ def chunk_text(text, size=CHUNK_SIZE):
 # ── CALL GEMINI ─────────────────────────────────────────────────────────────────
 def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
     """Invokes Gemini; returns generated HTML fragment or empty string on failure."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key={GEMINI_API_KEY}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
 
     if session is None:
