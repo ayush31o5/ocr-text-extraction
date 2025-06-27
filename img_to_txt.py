@@ -9,7 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
 from docx import Document
 
-# ── CONFIG & LOGGING ─────────────────────────────────────────────────────────────
+# Image OCR imports
+from PIL import Image
+import genai
+
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
 GEMINI_API_KEY = 'GEMINI_API_KEY'
@@ -27,6 +31,22 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 
+# ── IMAGE OCR FUNCTION ───────────────────────────────────────────────────────────
+def extract_text_from_image_gemini(image_path, api_key=None, model_name="gemini-1.5-flash", prompt="Extract the text from this image, including any emojis."):
+    if api_key is None:
+        api_key = os.getenv('GOOGLE_API_KEY')
+        if not api_key:
+            raise ValueError("Google Gemini API key not provided and GOOGLE_API_KEY not set.")
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel(model_name)
+    try:
+        img = Image.open(image_path)
+        response = model.generate_content([prompt, img])
+        response.resolve()
+        return response.text.strip()
+    except Exception as e:
+        print(f"Error during Gemini OCR: {e}")
+        return None
 
 # ── TEXT CHUNKING ────────────────────────────────────────────────────────────────
 def chunk_text(text, size=CHUNK_SIZE):
@@ -38,13 +58,12 @@ def chunk_text(text, size=CHUNK_SIZE):
         if len(chunk) + len(sentence) < size:
             chunk += sentence
         else:
-            if chunk: #avoid adding empty chunk
+            if chunk:
                 chunks.append(chunk)
             chunk = sentence
     if chunk:
         chunks.append(chunk)
     return chunks
-
 
 # ── CALL GEMINI ─────────────────────────────────────────────────────────────────
 def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
@@ -59,12 +78,11 @@ def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
     for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
         try:
             logging.info(f"Gemini API attempt {attempt}")
-            resp = session.post(url, json=payload, timeout=10)  # Added timeout
-            resp.raise_for_status()  # Raise HTTPError for bad responses
+            resp = session.post(url, json=payload, timeout=10)
+            resp.raise_for_status()
 
             response_json = resp.json()
 
-            # Robust error checking of the response structure
             if 'candidates' not in response_json or not isinstance(response_json['candidates'], list) or len(response_json['candidates']) == 0:
                 logging.error(f"Gemini API: Invalid response format - missing 'candidates'")
                 raise ValueError("Invalid Gemini API response format: missing 'candidates'")
@@ -81,15 +99,15 @@ def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
 
         except requests.exceptions.HTTPError as e:
             logging.error(f"Gemini API HTTP error on attempt {attempt}: {e}")
-            if e.response.status_code == 429:  # Handle rate limiting
+            if e.response.status_code == 429:
                 logging.warning("Gemini API: Rate limit exceeded.  Pausing...")
-                time.sleep(60)  # Pause longer for rate limits
+                time.sleep(60)
             elif attempt < RETRY_MAX_ATTEMPTS:
                 time.sleep(RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
             else:
                 logging.error("Gemini API: All retries failed due to HTTP error.")
-                return ""  # Or re-raise if you want the entire process to fail
-        except (requests.exceptions.RequestException, ValueError) as e: # Catch broader exceptions
+                return ""
+        except (requests.exceptions.RequestException, ValueError) as e:
             logging.error(f"Gemini API error on attempt {attempt}: {e}")
             if attempt < RETRY_MAX_ATTEMPTS:
                 time.sleep(RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
@@ -100,14 +118,13 @@ def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
     logging.error("Gemini API: all retries failed, returning empty string")
     return ""
 
-
 # ── PDF → HTML ──────────────────────────────────────────────────────────────────
 def process_page(page, session: requests.Session) -> str:
     text = page.extract_text() or ""
     html = ""
     for chunk in chunk_text(text):
         prompt = f"""
-You have been given text extracted from a page of an A4-sized document potentially containing Hindi/Sanskrit text. Assume an A4 page as a reference. Your task is to analyze this text and generate an exact HTML replica of how that text might have been structured and formatted on the original page, preserving all formatting details as described below. If the text suggests the presence of an image (e.g., mentions "figure", "image", or has a large gap typical of an image), replace that section with an image placeholder block labeled "Image".
+You have been given text extracted from a page of an A4-sized document potentially containing Hindi/Sanskrit text. Assume an A4 page as a reference. Your task is to analyze this text and generate an exact HTML replica of how that text might have been structured and formatted on the original page, preserving all formatting details as described below. If the text suggests the presence of an image (e.g., mentions \"figure\", \"image\", or has a large gap typical of an image), replace that section with an image placeholder block labeled \"Image\".
 
 Instructions for Extraction and HTML Formatting:
 
@@ -137,8 +154,8 @@ Handling Potential Images:
 Generate only the HTML code for the body content based on the text chunk provided above.
 """
         fragment = call_gemini_api(prompt, session=session)
-        if fragment: #avoid adding empty fragments
-          html += fragment
+        if fragment:
+            html += fragment
     return f"<div>{html}</div>"
 
 
@@ -146,10 +163,10 @@ def process_pdf(pdf_path: str) -> str:
     logging.info(f"Processing PDF: {pdf_path}")
     all_html = ""
     try:
-        with requests.Session() as session:  # Create a session here
+        with requests.Session() as session:
             with pdfplumber.open(pdf_path) as pdf:
                 with ThreadPoolExecutor(max_workers=4) as execr:
-                    futures = [execr.submit(process_page, p, session) for p in pdf.pages]  # Pass the session
+                    futures = [execr.submit(process_page, p, session) for p in pdf.pages]
                     for future in futures:
                         all_html += future.result()
         full = f"<html><body>{all_html}</body></html>"
@@ -157,7 +174,7 @@ def process_pdf(pdf_path: str) -> str:
         return full
     except Exception as e:
         logging.error(f"Error processing PDF: {e}")
-        return "<p>Error processing PDF.  See logs for details.</p>" # Return an error message to display to user
+        return "<p>Error processing PDF.  See logs for details.</p>"
 
 # ── HTML → DOCX ────────────────────────────────────────────────────────────────
 def html_to_docx(html_path: str, docx_path: str):
@@ -165,7 +182,6 @@ def html_to_docx(html_path: str, docx_path: str):
         with open(html_path, 'r', encoding='utf-8') as f:
             soup = BeautifulSoup(f, 'html.parser')
 
-        # grab everything under <body>, fallback to full document
         body = soup.body or soup
         full_text = body.get_text(separator='\n')
 
@@ -179,41 +195,45 @@ def html_to_docx(html_path: str, docx_path: str):
     except Exception as e:
         logging.error(f"Error converting HTML to DOCX: {e}")
 
-
 # ── FLASK ENDPOINTS ─────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     return render_template('index.html')
 
-
 @app.route('/upload', methods=['POST'])
 def upload():
     try:
         file = request.files['file']
-        pdf_path = os.path.join(UPLOAD_FOLDER, file.filename)
-        file.save(pdf_path)
+        filename = file.filename
+        _, ext = os.path.splitext(filename.lower())
 
-        html_output = os.path.join(OUTPUT_FOLDER, 'output.html')
-        docx_output = os.path.join(OUTPUT_FOLDER, 'output.docx')
+        if ext in ['.png', '.jpg', '.jpeg', '.bmp', '.gif']:
+            image_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(image_path)
+            text = extract_text_from_image_gemini(image_path)
+            return render_template('result.html', text=f"<pre>{text}</pre>")
+        else:
+            pdf_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(pdf_path)
 
-        # Process
-        html_content = process_pdf(pdf_path)
-        with open(html_output, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+            html_output = os.path.join(OUTPUT_FOLDER, 'output.html')
+            docx_output = os.path.join(OUTPUT_FOLDER, 'output.docx')
 
-        html_to_docx(html_output, docx_output)
+            html_content = process_pdf(pdf_path)
+            with open(html_output, 'w', encoding='utf-8') as f:
+                f.write(html_content)
 
-        return render_template('result.html', text=html_content, doc_path='output.docx')
+            html_to_docx(html_output, docx_output)
+
+            return render_template('result.html', text=html_content, doc_path='output.docx')
 
     except Exception as e:
         logging.error(f"Upload error: {e}")
-        return render_template('error.html', error=str(e)) # Handle errors and display to the user
-
+        return render_template('error.html', error=str(e))
 
 @app.route('/download/<path:filename>')
 def download(filename):
     return send_from_directory(OUTPUT_FOLDER, filename, as_attachment=True)
-
 
 if __name__ == '__main__':
     app.run(debug=True)

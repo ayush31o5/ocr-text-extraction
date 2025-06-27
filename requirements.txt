@@ -3,3 +3,4 @@ pdfplumber
 requests
 beautifulsoup4
 python-docx
+google-generativeai
