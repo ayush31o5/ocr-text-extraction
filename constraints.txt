@@ -1,0 +1,9 @@
+# constraints.txt
+
+# satisfy TensorFlow 2.19.0:
+ml-dtypes==0.5.1
+tensorboard==2.19.0
+
+# satisfy grpcio-status (and TensorFlow if needed):
+protobuf>=5.26.1,<6.0.0dev
+grpcio-status==1.65.0

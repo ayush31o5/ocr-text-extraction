@@ -11,13 +11,13 @@ from docx import Document
 
 # Image OCR imports
 from PIL import Image
-import genai
+import google.generativeai as genai
 
-
+# ── CONFIG & LOGGING ─────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
-GEMINI_API_KEY = 'GEMINI_API_KEY'
-if not GEMINI_API_KEY:
+GEMINI_API_KEY = 'AIzaSyAHBYZGkBWwBaSCt4rXyvDA3sQfjSwJGro'
+if GEMINI_API_KEY == 'AIzaSyAHBYZGkBWwBaSCt4rXyvDA3sQfjSwJGro':
     logging.warning("GEMINI_API_KEY is not set! API calls will fail.")
 
 RETRY_MAX_ATTEMPTS = 3
@@ -34,9 +34,7 @@ app = Flask(__name__)
 # ── IMAGE OCR FUNCTION ───────────────────────────────────────────────────────────
 def extract_text_from_image_gemini(image_path, api_key=None, model_name="gemini-1.5-flash", prompt="Extract the text from this image, including any emojis."):
     if api_key is None:
-        api_key = os.getenv('GOOGLE_API_KEY')
-        if not api_key:
-            raise ValueError("Google Gemini API key not provided and GOOGLE_API_KEY not set.")
+        api_key = GEMINI_API_KEY
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name)
     try:
@@ -45,8 +43,8 @@ def extract_text_from_image_gemini(image_path, api_key=None, model_name="gemini-
         response.resolve()
         return response.text.strip()
     except Exception as e:
-        print(f"Error during Gemini OCR: {e}")
-        return None
+        logging.error(f"Error during Gemini OCR: {e}")
+        return ""
 
 # ── TEXT CHUNKING ────────────────────────────────────────────────────────────────
 def chunk_text(text, size=CHUNK_SIZE):
@@ -54,7 +52,7 @@ def chunk_text(text, size=CHUNK_SIZE):
     chunks = []
     chunk = ""
     for sentence in sentences:
-        sentence = sentence.strip() + '.'  # add back the missing '.'
+        sentence = sentence.strip() + '.'
         if len(chunk) + len(sentence) < size:
             chunk += sentence
         else:
@@ -65,61 +63,21 @@ def chunk_text(text, size=CHUNK_SIZE):
         chunks.append(chunk)
     return chunks
 
-# ── CALL GEMINI ─────────────────────────────────────────────────────────────────
-def call_gemini_api(prompt: str, session: requests.Session = None) -> str:
-    """Invokes Gemini; returns generated HTML fragment or empty string on failure."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+# ── SIMPLE GEMINI CALL FOR PDF PROCESSING ─────────────────────────────────────────
+def call_gemini_for_html(prompt: str) -> str:
+    """Invoke Gemini directly and return HTML fragment or empty string."""
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    try:
+        response = model.generate_content([prompt])
+        response.resolve()
+        return response.text
+    except Exception as e:
+        logging.error(f"Error during Gemini HTML generation: {e}")
+        return ""
 
-    if session is None:
-        session = requests.Session()
-
-    logging.info("call_gemini_api: invoked")
-    for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
-        try:
-            logging.info(f"Gemini API attempt {attempt}")
-            resp = session.post(url, json=payload, timeout=10)
-            resp.raise_for_status()
-
-            response_json = resp.json()
-
-            if 'candidates' not in response_json or not isinstance(response_json['candidates'], list) or len(response_json['candidates']) == 0:
-                logging.error(f"Gemini API: Invalid response format - missing 'candidates'")
-                raise ValueError("Invalid Gemini API response format: missing 'candidates'")
-
-            candidate = response_json['candidates'][0]
-            if 'content' not in candidate or 'parts' not in candidate['content'] or not isinstance(candidate['content']['parts'], list) or len(candidate['content']['parts']) == 0:
-                logging.error(f"Gemini API: Invalid response format - missing 'content' or 'parts'")
-                raise ValueError("Invalid Gemini API response format: missing 'content' or 'parts'")
-
-            text = candidate['content']['parts'][0]['text']
-
-            logging.info("Gemini API call succeeded")
-            return text
-
-        except requests.exceptions.HTTPError as e:
-            logging.error(f"Gemini API HTTP error on attempt {attempt}: {e}")
-            if e.response.status_code == 429:
-                logging.warning("Gemini API: Rate limit exceeded.  Pausing...")
-                time.sleep(60)
-            elif attempt < RETRY_MAX_ATTEMPTS:
-                time.sleep(RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
-            else:
-                logging.error("Gemini API: All retries failed due to HTTP error.")
-                return ""
-        except (requests.exceptions.RequestException, ValueError) as e:
-            logging.error(f"Gemini API error on attempt {attempt}: {e}")
-            if attempt < RETRY_MAX_ATTEMPTS:
-                time.sleep(RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
-            else:
-                logging.error("Gemini API: All retries failed, returning empty string")
-                return ""
-
-    logging.error("Gemini API: all retries failed, returning empty string")
-    return ""
-
-# ── PDF → HTML ──────────────────────────────────────────────────────────────────
-def process_page(page, session: requests.Session) -> str:
+# ── SINGLE PAGE PROCESSING ───────────────────────────────────────────────────────
+def process_page(page) -> str:
     text = page.extract_text() or ""
     html = ""
     for chunk in chunk_text(text):
@@ -153,28 +111,32 @@ Handling Potential Images:
 
 Generate only the HTML code for the body content based on the text chunk provided above.
 """
-        fragment = call_gemini_api(prompt, session=session)
+        fragment = call_gemini_for_html(prompt)
         if fragment:
             html += fragment
     return f"<div>{html}</div>"
 
-
+# ── PDF → HTML ──────────────────────────────────────────────────────────────────
 def process_pdf(pdf_path: str) -> str:
-    logging.info(f"Processing PDF: {pdf_path}")
-    all_html = ""
+    logging.info(f"Starting PDF processing: {pdf_path}")
     try:
-        with requests.Session() as session:
-            with pdfplumber.open(pdf_path) as pdf:
-                with ThreadPoolExecutor(max_workers=4) as execr:
-                    futures = [execr.submit(process_page, p, session) for p in pdf.pages]
-                    for future in futures:
-                        all_html += future.result()
+        with pdfplumber.open(pdf_path) as pdf:
+            pages = pdf.pages
+            total = len(pages)
+            logging.info(f"Total pages detected: {total}")
+            all_html = ""
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                futures = [executor.submit(process_page, p) for p in pages]
+                for idx, future in enumerate(futures, start=1):
+                    html_fragment = future.result()
+                    all_html += html_fragment
+                    logging.info(f"Processed page {idx}/{total}")
         full = f"<html><body>{all_html}</body></html>"
-        logging.info(f"Generated HTML length: {len(full)} characters")
+        logging.info(f"PDF processing complete, generated {total} page fragments")
         return full
     except Exception as e:
         logging.error(f"Error processing PDF: {e}")
-        return "<p>Error processing PDF.  See logs for details.</p>"
+        return "<p>Error processing PDF. See logs for details.</p>"
 
 # ── HTML → DOCX ────────────────────────────────────────────────────────────────
 def html_to_docx(html_path: str, docx_path: str):
