@@ -3,14 +3,109 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>Extraction Result</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversion Result</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .actions {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            margin: 5px;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            transition: background-color 0.3s;
+        }
+
+        .btn-primary {
+            background-color: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-success {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background-color: #218838;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #5a6268;
+        }
+
+        .result-content {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            background-color: #fafafa;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .result-content iframe {
+            width: 100%;
+            height: 500px;
+            border: none;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>Extracted HTML Content</h1>
-    <div>{{ text|safe }}</div>
-    <br>
-    <a href="{{ url_for('download', filename=doc_path) }}" download>Download Word Document</a>
+    <div class="container">
+        <h1>✅ Conversion Complete!</h1>
+
+        <div class="actions">
+            <a href="/" class="btn btn-primary">🔄 Convert Another File</a>
+            {% if doc_path %}
+            <a href="/download/{{ doc_path }}" class="btn btn-success">📄 Download DOCX</a>
+            <a href="/download/output.html" class="btn btn-secondary">🌐 Download HTML</a>
+            {% endif %}
+        </div>
+
+        <div class="result-content">
+            {% if text %}
+            {{ text|safe }}
+            {% else %}
+            <p>No content was extracted from the file.</p>
+            {% endif %}
+        </div>
+    </div>
 </body>
 
 </html>

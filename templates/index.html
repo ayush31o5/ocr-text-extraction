@@ -3,15 +3,166 @@
 
 <head>
     <meta charset="UTF-8">
-    <title>File Upload</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF & Image to Text Converter</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background-color: #fafafa;
+            margin-bottom: 20px;
+        }
+
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #e3f2fd;
+        }
+
+        input[type="file"] {
+            margin: 20px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: 100%;
+        }
+
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        .supported-formats {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #e9ecef;
+            border-radius: 5px;
+        }
+
+        .supported-formats h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+
+        .format-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .format-item {
+            background-color: #6c757d;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+    </style>
 </head>
 
 <body>
-    <h1>Upload PDF File</h1>
-    <form action="/upload" method="post" enctype="multipart/form-data">
-        <input type="file" name="file" accept=".pdf" required>
-        <button type="submit">Upload</button>
-    </form>
+    <div class="container">
+        <h1>📄 PDF & Image to Text Converter</h1>
+
+        <form action="/upload" method="POST" enctype="multipart/form-data">
+            <div class="upload-area" id="uploadArea">
+                <div>
+                    <h3>📁 Select or Drop Your File Here</h3>
+                    <p>Choose a PDF or image file to extract text from</p>
+                    <input type="file" name="file" id="fileInput"
+                        accept=".pdf,.png,.jpg,.jpeg,.bmp,.gif,.tiff,.webp,.svg,.ico" required>
+                </div>
+            </div>
+
+            <button type="submit">🚀 Convert to Text</button>
+        </form>
+
+        <div class="supported-formats">
+            <h3>✅ Supported Formats</h3>
+            <div class="format-list">
+                <span class="format-item">PDF</span>
+                <span class="format-item">PNG</span>
+                <span class="format-item">JPG</span>
+                <span class="format-item">JPEG</span>
+                <span class="format-item">BMP</span>
+                <span class="format-item">GIF</span>
+                <span class="format-item">TIFF</span>
+                <span class="format-item">WEBP</span>
+                <span class="format-item">SVG</span>
+                <span class="format-item">ICO</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        // Drag and drop functionality
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+            }
+        });
+
+        // Click to select file
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // Display selected file name
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const fileName = e.target.files[0].name;
+                uploadArea.querySelector('p').textContent = `Selected: ${fileName}`;
+            }
+        });
+    </script>
 </body>
 
 </html>
