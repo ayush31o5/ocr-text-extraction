@@ -78,8 +78,6 @@ config.ini
 .env.production
 secrets.json
 
-# HTML templates (if generated)
-templates/*.html
 
 # Text files with constraints or temporary data
 constraints.txt
