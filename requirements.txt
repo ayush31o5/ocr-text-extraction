@@ -1,6 +1,7 @@
-Flask
-pdfplumber
-requests
 beautifulsoup4
-python-docx
+Flask
 google-generativeai
+pdfplumber
+Pillow
+python-docx
+requests
